@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { splitTextByLiteralQuery } from "./textHighlight.ts";
+import { splitTextByLiteralQuery, splitTextBySearchQuery } from "./textHighlight.ts";
 
 describe("splitTextByLiteralQuery", () => {
   test("highlights every Chinese literal match", () => {
@@ -40,6 +40,19 @@ describe("splitTextByLiteralQuery", () => {
     ]);
     expect(splitTextByLiteralQuery("session", "missing")).toEqual([
       { value: "session", highlighted: false },
+    ]);
+  });
+
+  test("highlights each unquoted term and quoted phrase", () => {
+    expect(splitTextBySearchQuery(
+      "推送完成，GitHub Actions 将部署到家中服务器",
+      '推送 "GitHub Actions" 家中服务器',
+    )).toEqual([
+      { value: "推送", highlighted: true },
+      { value: "完成，", highlighted: false },
+      { value: "GitHub Actions", highlighted: true },
+      { value: " 将部署到", highlighted: false },
+      { value: "家中服务器", highlighted: true },
     ]);
   });
 });

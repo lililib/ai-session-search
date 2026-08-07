@@ -34,6 +34,7 @@ import { SelectControl } from "./components/SelectControl.tsx";
 import { HighlightedText } from "./components/HighlightedText.tsx";
 import { AppViewTabs, type AppView } from "./components/AppViewTabs.tsx";
 import { ContextLibrary } from "./components/ContextLibrary.tsx";
+import { ConversationNavigation } from "./components/ConversationNavigation.tsx";
 import {
   commandDialectForTerminal,
   defaultTerminalSettings,
@@ -48,6 +49,7 @@ import {
 import { useAppKeyboardShortcuts, useDialogFocus } from "./useAppKeyboardShortcuts.ts";
 import { jsonRequest, queryString } from "./api.ts";
 import { copyText } from "./clipboard.ts";
+import { nextHighlightIndex } from "./conversationNavigation.ts";
 
 type Project = { provider: ProviderId; projectPath: string; count: number };
 type SessionDetail = { session: SessionSummary; messages: NormalizedMessage[] };
@@ -59,8 +61,6 @@ type AppStatus = {
 };
 type ActiveSearchMatch = {
   sessionKey: string;
-  messageIndex: number;
-  role: SearchResult["role"];
   query: string;
 };
 
@@ -111,6 +111,10 @@ export const App = () => {
   const [selected, setSelected] = useState<SessionDetail | null>(null);
   const [selectedMessageIndex, setSelectedMessageIndex] = useState<number | null>(null);
   const [activeSearchMatch, setActiveSearchMatch] = useState<ActiveSearchMatch | null>(null);
+  const [highlightNavigation, setHighlightNavigation] = useState({
+    currentIndex: -1,
+    total: 0,
+  });
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [resumeCommandTemplates, setResumeCommandTemplates] =
@@ -137,6 +141,7 @@ export const App = () => {
   const sidebarWidthRef = useRef(sidebarWidth);
   const resizingSidebarRef = useRef(false);
   const messageRefs = useRef(new Map<number, HTMLElement>());
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
   const runtimePlatform = status?.runtimePlatform ?? "other";
   const availableTerminalIds = terminalIdsForPlatform(runtimePlatform);
   const terminalSupported = availableTerminalIds.length > 0;
@@ -320,6 +325,56 @@ export const App = () => {
     }, 30);
   }, [selected, selectedMessageIndex]);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const container = messagesScrollRef.current;
+      if (
+        container === null ||
+        selected === null ||
+        activeSearchMatch?.sessionKey !== selected.session.sessionKey
+      ) {
+        setHighlightNavigation({ currentIndex: -1, total: 0 });
+        return;
+      }
+      const highlights = [...container.querySelectorAll<HTMLElement>("mark.search-highlight")];
+      highlights.forEach((highlight) => highlight.classList.remove("current-search-highlight"));
+      const selectedMessage = selectedMessageIndex === null
+        ? null
+        : messageRefs.current.get(selectedMessageIndex) ?? null;
+      const selectedHighlight = selectedMessage?.querySelector<HTMLElement>("mark.search-highlight") ?? null;
+      const selectedHighlightIndex = selectedHighlight === null ? -1 : highlights.indexOf(selectedHighlight);
+      if (selectedHighlightIndex >= 0) {
+        highlights[selectedHighlightIndex]?.classList.add("current-search-highlight");
+      }
+      setHighlightNavigation({
+        currentIndex: selectedHighlightIndex,
+        total: highlights.length,
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSearchMatch, selected, selectedMessageIndex]);
+
+  const scrollConversationTo = (position: "top" | "bottom"): void => {
+    const container = messagesScrollRef.current;
+    if (container === null) return;
+    container.scrollTo({
+      top: position === "top" ? 0 : container.scrollHeight,
+      behavior: "smooth",
+    });
+  };
+
+  const jumpToNextHighlight = (): void => {
+    const container = messagesScrollRef.current;
+    if (container === null) return;
+    const highlights = [...container.querySelectorAll<HTMLElement>("mark.search-highlight")];
+    const nextIndex = nextHighlightIndex(highlightNavigation.currentIndex, highlights.length);
+    if (nextIndex < 0) return;
+    highlights.forEach((highlight) => highlight.classList.remove("current-search-highlight"));
+    highlights[nextIndex]?.classList.add("current-search-highlight");
+    highlights[nextIndex]?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setHighlightNavigation({ currentIndex: nextIndex, total: highlights.length });
+  };
+
   const openSession = async (sessionKey: string, result?: SearchResult): Promise<void> => {
     setLoading(true);
     try {
@@ -333,8 +388,6 @@ export const App = () => {
           ? null
           : {
               sessionKey,
-              messageIndex: result.messageIndex,
-              role: result.role,
               query: debouncedQuery,
             },
       );
@@ -802,7 +855,12 @@ export const App = () => {
               >
                 <div className="session-row-title">
                   <span className="provider-dot" style={{ background: providerColor(item.provider) }} />
-                  <strong>{item.displayTitle}</strong>
+                  <strong>
+                    <HighlightedText
+                      text={item.displayTitle}
+                      query={result === null ? "" : debouncedQuery}
+                    />
+                  </strong>
                   {item.favorite && <span className="favorite-star">★</span>}
                 </div>
                 {item.collectionId !== null && (
@@ -815,7 +873,11 @@ export const App = () => {
                     {t("session.original", { title: item.originalTitle })}
                   </p>
                 )}
-                {result !== null && <p className="snippet">{result.snippet}</p>}
+                {result !== null && (
+                  <p className="snippet">
+                    <HighlightedText text={result.snippet} query={debouncedQuery} />
+                  </p>
+                )}
                 <div className="session-meta">
                   <span>{providerLabel(item.provider)}</span>
                   <time>{formatDate(item.updatedAt, locale)}</time>
@@ -900,8 +962,7 @@ export const App = () => {
                     <HighlightedText
                       text={selected.session.displayTitle}
                       query={
-                        activeSearchMatch?.sessionKey === selected.session.sessionKey &&
-                        activeSearchMatch.role === "title"
+                        activeSearchMatch?.sessionKey === selected.session.sessionKey
                           ? activeSearchMatch.query
                           : ""
                       }
@@ -1072,7 +1133,7 @@ export const App = () => {
               )}
             </header>
 
-            <div className="messages">
+            <div className="messages" ref={messagesScrollRef}>
               {selected.messages.map((message) => (
                 <article
                   key={message.index}
@@ -1101,8 +1162,7 @@ export const App = () => {
                     <HighlightedText
                       text={message.content}
                       query={
-                        activeSearchMatch?.sessionKey === selected.session.sessionKey &&
-                        activeSearchMatch.messageIndex === message.index
+                        activeSearchMatch?.sessionKey === selected.session.sessionKey
                           ? activeSearchMatch.query
                           : ""
                       }
@@ -1111,6 +1171,19 @@ export const App = () => {
                 </article>
               ))}
             </div>
+            <ConversationNavigation
+              currentHighlightIndex={highlightNavigation.currentIndex}
+              highlightCount={highlightNavigation.total}
+              labels={{
+                navigation: t("conversation.navigation"),
+                top: t("conversation.top"),
+                nextHighlight: t("conversation.nextHighlight"),
+                bottom: t("conversation.bottom"),
+              }}
+              onTop={() => scrollConversationTo("top")}
+              onNextHighlight={jumpToNextHighlight}
+              onBottom={() => scrollConversationTo("bottom")}
+            />
           </>
         )}
       </main>

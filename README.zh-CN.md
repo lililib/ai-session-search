@@ -5,48 +5,45 @@
 [![GitHub Release](https://img.shields.io/github/v/release/lililib/ai-session-search)](https://github.com/lililib/ai-session-search/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-本地优先的 AI 编程会话搜索与上下文管理工具。自动发现 7 种编程工具的本地会话，并使用
-SQLite FTS5 trigram 索引搜索自然语言、代码、路径、错误信息、Session ID 和用户保存的
-上下文；来源会话始终保持只读。
+本地优先的 AI 编程会话搜索与上下文管理工具。自动发现多种编程工具的本地会话，并使用
+SQLite FTS5 trigram 索引搜索自然语言、代码、路径、错误信息、标题和 Session ID；来源
+会话始终保持只读。
 
 ![AI Session Search 界面](./docs/images/ai-session-search.png)
 
-## 桌面客户端
+## 主要功能
 
-从 [GitHub Releases](https://github.com/lililib/ai-session-search/releases) 下载：
+- 跨来源、项目全文搜索，支持中文、日文、韩文、英文和代码子串
+- 空格分隔多个关键词可逐步缩小范围，即使关键词分散在同一会话的不同消息中也能找到
+- 上下文库支持整段内容的保存、搜索、分类和复制
+- 收藏、重命名、收藏夹、筛选及可调整宽度的导航栏
+- 复制 Session ID、自定义恢复命令或在支持的终端中直接恢复
+- 后台增量索引、文件变化监听和自定义会话来源路径
+- Web/桌面端共用数据，界面自动切换简体中文或英文
+
+无需 API Key 或云端数据库。用户元数据和索引只保存在应用自己的 SQLite 数据库中。
+
+## 桌面版
+
+从 [GitHub Releases](https://github.com/lililib/ai-session-search/releases) 下载便携版：
 
 - macOS Apple Silicon：`darwin-arm64.zip`
 - macOS Intel：`darwin-x64.zip`
-- Windows x64 便携版：`AI.Session.Search-win32-x64-<version>.zip`
+- Windows 10/11 x64：`AI.Session.Search-win32-x64-<version>.zip`
 
-客户端不需要安装 Node.js。启动后会立即显示界面，在后台扫描会话并展示索引进度。
-Web 和桌面端使用当前用户系统应用数据目录中的同一个数据库，因此索引、收藏、收藏夹、
-重命名、上下文和设置可以共用。已有的桌面端专用元数据会自动迁移，旧目录会保留作为备份。
+解压后直接运行，无需安装 Node.js。当前发布包尚未签名，首次打开时 macOS Gatekeeper
+或 Windows SmartScreen 可能显示提示。
 
-当前发布包尚未签名，首次打开可能出现 Gatekeeper 或 SmartScreen 提示。Windows 版本为
-便携版：解压 ZIP 后运行 `ai-session-search.exe`，无需安装。“在终端中恢复”支持 macOS
-和 Windows；Windows Terminal 会在最近使用的窗口中新建标签页，找不到 `wt.exe` 时回退
-到 PowerShell。
-Windows 包要求 64 位 Windows 10 或 Windows 11，不支持 Windows 7/8/8.1。
+## 搜索语法
 
-## 主要功能
+使用空格分隔记得的零散关键词，结果必须在同一个会话中包含全部关键词；关键词可以分别出现
+在不同消息、标题或 Session ID 中。包含空格的完整短语使用引号包裹：
 
-- 跨来源、项目、消息内容、自定义名称和完整/部分 Session ID 搜索
-- SQLite FTS5 trigram 全文索引，支持中文、日文、韩文、英文和代码子串
-- 上下文库支持整段内容的新增、编辑、删除、全文搜索、收藏夹管理和原样复制
-- 上下文默认按复制次数与创建时间智能排序，并提供另外四种明确排序方式
-- 收藏、重命名、收藏夹分类及对应筛选
-- 复制 Session ID 和可自定义的恢复命令
-- macOS 支持 Terminal、iTerm2、Warp 和自定义终端/Shell
-- Windows 支持 Windows Terminal、PowerShell、命令提示符和自定义可执行文件
-- 侧边栏可拖拽调整宽度，并记住用户设置
-- 页面内快捷键：`Cmd/Ctrl+K`、`Cmd/Ctrl+F` 或 `/` 聚焦搜索，`Esc` 关闭当前编辑器或弹层
-- 后台增量索引和文件变化监听
-- 桌面端使用后台 Worker 和有限大小的数据库批次建立索引，避免首次扫描阻塞窗口
-- Web/桌面端共用会话来源设置，支持自定义路径、启用/禁用和即时重新扫描
-- 简体中文/英文界面自动切换；无需 API Key 或云端数据库
-
-本项目不会修改任何来源会话。上下文、名称、收藏夹、设置和索引只写入自己的 SQLite 数据库。
+```text
+推送 家中服务器
+推送 "GitHub Actions" "home server"
+35cb2091 部署
+```
 
 ## 支持的客户端
 
@@ -60,13 +57,10 @@ Windows 包要求 64 位 Windows 10 或 Windows 11，不支持 Windows 7/8/8.1�
 | `cursor` | Cursor | `~/.cursor` |
 | `kimi` | Kimi Code | `~/.kimi-code` |
 
-Web 和桌面端都可以打开“会话来源”，修改客户端目录、恢复自动路径或启用/禁用客户端。
-设置保存在应用自己的数据库中，保存后即时重新扫描，无需重启；自定义路径必须是绝对路径。
+在“会话来源”中可以修改路径或启用/禁用客户端，无需重启。界面中保存的设置优先于 CLI
+参数、环境变量和平台默认路径。
 
-路径优先级为：界面保存设置 → CLI 参数 → `AI_SESSION_*` 环境变量 → 客户端原生环境变量
-→ 平台默认目录。因此不会写死用户主目录。
-
-## CLI / Web 版本
+## Web / CLI
 
 要求 Node.js 24+ 和 pnpm 11：
 
@@ -76,7 +70,7 @@ corepack pnpm build
 corepack pnpm start
 ```
 
-默认地址为 `http://localhost:3411`。
+打开 `http://localhost:3411`。
 
 | 参数 | 环境变量 | 默认值 |
 | --- | --- | --- |
@@ -89,48 +83,19 @@ corepack pnpm start
 | `--providers <ids>` | `AI_SESSION_PROVIDERS` | `auto` |
 | `--no-watch` | — | 默认监听文件变化 |
 
-Web 和桌面端都支持 `--data-dir` 与 `AI_SESSION_DATA_DIR`。两端共用的默认目录在 macOS 为
-`~/Library/Application Support/ai-session-search`，Windows 为
-`%LOCALAPPDATA%\\ai-session-search`，Linux 为 `~/.local/share/ai-session-search`。
+默认数据目录在 macOS 为 `~/Library/Application Support/ai-session-search`，Windows 为
+`%LOCALAPPDATA%\\ai-session-search`，Linux 为 `~/.local/share/ai-session-search`，Web 与桌面端共用。
 
-示例：
-
-```bash
-corepack pnpm start --providers codex --codex-dir /path/to/codex-home
-corepack pnpm start --provider-dir kimi=/custom/kimi --provider-dir cursor=/custom/cursor
-```
-
-## 恢复命令
-
-内置模板示例：
-
-```text
-Claude Code: cd {cwd} && claude --resume {sessionId}
-Codex:       cd {cwd} && codex resume {sessionId}
-```
-
-`{cwd}` 和 `{sessionId}` 会从会话自动替换。也可以把模板设置为 `yolo`，复制结果会自动
-追加 Session ID。macOS 终端执行使用可配置的绝对 Shell 路径和 `-lic`，因此可以读取
-`~/.zshrc` 中的别名；iTerm2 会优先在当前窗口打开新 Tab。Windows 会按 PowerShell
-或命令提示符语法生成命令，并通过 `wt.exe -w 0 new-tab` 复用最近的终端窗口。
-
-## 开发与发布
+## 开发
 
 ```bash
-corepack pnpm dev             # Web 开发模式
-corepack pnpm desktop:start   # 启动 Electron
-corepack pnpm desktop:make    # 构建当前平台客户端
+corepack pnpm dev
+corepack pnpm desktop:start
+corepack pnpm desktop:make
 corepack pnpm test
 corepack pnpm typecheck
 corepack pnpm build
 ```
-
-## 隐私与许可证
-
-- 不读取 `auth.json`、API Key 或登录凭证。
-- 不执行会话内容中的命令或工具调用。
-- 终端恢复仅在用户点击后执行，并要求服务监听回环地址。
-- 如需远程暴露 Web 服务，请自行增加认证和网络访问控制。
 
 搜索架构参考并改编自
 [d-kimuson/claude-code-viewer](https://github.com/d-kimuson/claude-code-viewer)。详见

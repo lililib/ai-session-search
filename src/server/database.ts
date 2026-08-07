@@ -18,6 +18,7 @@ import { DEFAULT_RESUME_COMMAND_TEMPLATES } from "../shared/resumeCommand.ts";
 import { isProviderId } from "../shared/providers.ts";
 import { PROVIDER_IDS } from "../shared/types.ts";
 import { TERMINAL_IDS } from "../shared/types.ts";
+import { parseSearchTerms } from "../shared/searchQuery.ts";
 import {
   defaultTerminalSettings,
   isValidShellReference,
@@ -75,6 +76,47 @@ const contextSmartScore = (snippet: ContextSnippetSummary, now: number): number 
 
 const compareNullableTimeDesc = (left: number | null, right: number | null): number =>
   (right ?? Number.NEGATIVE_INFINITY) - (left ?? Number.NEGATIVE_INFINITY);
+
+type SearchRowMatch = {
+  row: SqlRow;
+  terms: Set<number>;
+};
+
+type SessionSearchMatch = {
+  terms: Set<number>;
+  rows: Map<string, SearchRowMatch>;
+};
+
+const searchRowKey = (row: SqlRow): string =>
+  `${numberColumn(row, "message_index")}:${stringColumn(row, "role")}:${stringColumn(row, "content")}`;
+
+const isSessionIdRow = (row: SqlRow): boolean =>
+  numberColumn(row, "message_index") < 0 &&
+  stringColumn(row, "content") === stringColumn(row, "source_session_id");
+
+const compareSearchRows = (left: SearchRowMatch, right: SearchRowMatch): number => {
+  const termDifference = right.terms.size - left.terms.size;
+  if (termDifference !== 0) return termDifference;
+  const messageDifference = Number(isSessionIdRow(left.row)) - Number(isSessionIdRow(right.row));
+  if (messageDifference !== 0) return messageDifference;
+  const roleWeight = (row: SqlRow): number => {
+    const role = stringColumn(row, "role");
+    return role === "title" ? 2 : role === "user" ? 1 : 0;
+  };
+  const roleDifference = roleWeight(right.row) - roleWeight(left.row);
+  if (roleDifference !== 0) return roleDifference;
+  return numberColumn(left.row, "rank") - numberColumn(right.row, "rank");
+};
+
+const firstSearchTermIndex = (content: string, terms: string[]): number => {
+  const normalizedContent = content.toLocaleLowerCase();
+  let firstIndex = -1;
+  for (const term of terms) {
+    const index = normalizedContent.indexOf(term.toLocaleLowerCase());
+    if (index >= 0 && (firstIndex < 0 || index < firstIndex)) firstIndex = index;
+  }
+  return firstIndex;
+};
 
 export class SearchDatabase {
   readonly #db: DatabaseSync;
@@ -351,7 +393,8 @@ export class SearchDatabase {
     limit?: number;
   }): SearchResult[] {
     const query = options.query.trim();
-    if (query === "") return [];
+    const terms = parseSearchTerms(query);
+    if (terms.length === 0) return [];
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     const filters: string[] = [];
     const filterValues: SqlValue[] = [];
@@ -374,16 +417,19 @@ export class SearchDatabase {
     }
     const extraWhere = filters.length === 0 ? "" : ` AND ${filters.join(" AND ")}`;
 
-    const select = `
-      SELECT f.session_key, s.source_session_id, s.provider, s.project_path,
-             s.original_title, m.custom_title, COALESCE(m.favorite, 0) favorite, m.collection_id,
-             s.started_at, s.updated_at, s.message_count,
-             CAST(f.message_index AS INTEGER) message_index,
-             f.role, f.content, f.rank
+    const searchColumns = `
+      f.session_key, s.source_session_id, s.provider, s.project_path,
+      s.original_title, m.custom_title, COALESCE(m.favorite, 0) favorite, m.collection_id,
+      s.started_at, s.updated_at, s.message_count,
+      CAST(f.message_index AS INTEGER) message_index,
+      f.role, f.content, f.rank
+    `;
+    const searchFrom = `
       FROM messages_fts f
       JOIN sessions s ON s.session_key = f.session_key
       LEFT JOIN session_metadata m ON m.session_key = f.session_key
     `;
+    const select = `SELECT ${searchColumns} ${searchFrom}`;
     const idSelect = `
       SELECT s.session_key, s.source_session_id, s.provider, s.project_path,
              s.original_title, m.custom_title, COALESCE(m.favorite, 0) favorite, m.collection_id,
@@ -392,47 +438,116 @@ export class SearchDatabase {
       FROM sessions s
       LEFT JOIN session_metadata m ON m.session_key = s.session_key
     `;
-    const idLikeQuery = escapeLikeQuery(query);
-    const idRows = this.#db
-      .prepare(
-        `${idSelect}
-         WHERE (s.source_session_id LIKE ? ESCAPE '\\' COLLATE NOCASE
-                OR s.session_key LIKE ? ESCAPE '\\' COLLATE NOCASE)${extraWhere}
-         ORDER BY CASE
-                    WHEN s.source_session_id = ? COLLATE NOCASE THEN 0
-                    WHEN s.session_key = ? COLLATE NOCASE THEN 1
-                    ELSE 2
-                  END,
-                  COALESCE(m.favorite, 0) DESC, s.updated_at DESC
-         LIMIT ?`,
-      )
-      .all(idLikeQuery, idLikeQuery, query, query, ...filterValues, limit) as SqlRow[];
-    const contentRows =
-      query.length < 3
+    const matches = new Map<string, SessionSearchMatch>();
+    let candidateSessionKeys: Set<string> | null = null;
+    const orderedTerms = terms
+      .map((term, index) => ({ term, index }))
+      .sort((left, right) => {
+        const indexedDifference = Number(right.term.length >= 3) - Number(left.term.length >= 3);
+        return indexedDifference !== 0 ? indexedDifference : right.term.length - left.term.length;
+      });
+
+    for (const { term, index: termIndex } of orderedTerms) {
+      const previousCandidates: Set<string> | null = candidateSessionKeys;
+      if (previousCandidates?.size === 0) return [];
+      const restrictCandidates = previousCandidates !== null && previousCandidates.size <= 500;
+      const candidateValues = restrictCandidates ? [...previousCandidates] : [];
+      const candidateWhere = restrictCandidates
+        ? ` AND s.session_key IN (${candidateValues.map(() => "?").join(", ")})`
+        : "";
+      const scopedWhere = `${extraWhere}${candidateWhere}`;
+      const scopedValues = [...filterValues, ...candidateValues];
+      const idLikeQuery = escapeLikeQuery(term);
+      const singleTermIdSuffix = terms.length === 1
+        ? ` ORDER BY CASE
+                       WHEN s.source_session_id = ? COLLATE NOCASE THEN 0
+                       WHEN s.session_key = ? COLLATE NOCASE THEN 1
+                       ELSE 2
+                     END,
+                     COALESCE(m.favorite, 0) DESC, s.updated_at DESC
+            LIMIT ?`
+        : "";
+      const singleTermIdValues = terms.length === 1 ? [term, term, limit] : [];
+      const idRows = this.#db
+        .prepare(
+          `${idSelect}
+           WHERE (s.source_session_id LIKE ? ESCAPE '\\' COLLATE NOCASE
+                  OR s.session_key LIKE ? ESCAPE '\\' COLLATE NOCASE)${scopedWhere}${singleTermIdSuffix}`,
+        )
+        .all(idLikeQuery, idLikeQuery, ...scopedValues, ...singleTermIdValues) as SqlRow[];
+      const contentPredicate = term.length < 3
+        ? "f.content LIKE ? ESCAPE '\\'"
+        : "messages_fts MATCH ?";
+      const contentQueryValue = term.length < 3 ? escapeLikeQuery(term) : escapeFtsQuery(term);
+      const contentRows = terms.length === 1
         ? (this.#db
             .prepare(
-              `${select} WHERE f.content LIKE ? ESCAPE '\\'${extraWhere}
-               ORDER BY COALESCE(m.favorite, 0) DESC, s.updated_at DESC LIMIT ?`,
-            )
-            .all(escapeLikeQuery(query), ...filterValues, limit) as SqlRow[])
-        : (this.#db
-            .prepare(
-              `${select} WHERE messages_fts MATCH ?${extraWhere}
+              `${select} WHERE ${contentPredicate}${scopedWhere}
                ORDER BY (f.rank * CASE f.role WHEN 'title' THEN 1.5 WHEN 'user' THEN 1.15 ELSE 1 END),
                         s.updated_at DESC LIMIT ?`,
             )
-            .all(escapeFtsQuery(query), ...filterValues, limit) as SqlRow[]);
+            .all(contentQueryValue, ...scopedValues, limit) as SqlRow[])
+        : (this.#db
+            .prepare(
+              `SELECT * FROM (
+                 SELECT ${searchColumns},
+                        ROW_NUMBER() OVER (
+                          PARTITION BY f.session_key
+                          ORDER BY (f.rank * CASE f.role
+                            WHEN 'title' THEN 1.5 WHEN 'user' THEN 1.15 ELSE 1 END),
+                            CAST(f.message_index AS INTEGER)
+                        ) search_row_number
+                 ${searchFrom}
+                 WHERE ${contentPredicate}${scopedWhere}
+               ) WHERE search_row_number = 1`,
+            )
+            .all(contentQueryValue, ...scopedValues) as SqlRow[]);
+      const termSessionKeys = new Set<string>();
 
-    const idSessionKeys = new Set(idRows.map((row) => stringColumn(row, "session_key")));
-    const rows = [
-      ...idRows,
-      ...contentRows.filter((row) => !idSessionKeys.has(stringColumn(row, "session_key"))),
-    ].slice(0, limit);
+      for (const row of [...idRows, ...contentRows]) {
+        const sessionKey = stringColumn(row, "session_key");
+        termSessionKeys.add(sessionKey);
+        let sessionMatch = matches.get(sessionKey);
+        if (sessionMatch === undefined) {
+          sessionMatch = { terms: new Set(), rows: new Map() };
+          matches.set(sessionKey, sessionMatch);
+        }
+        sessionMatch.terms.add(termIndex);
+        const rowKey = searchRowKey(row);
+        const rowMatch = sessionMatch.rows.get(rowKey) ?? { row, terms: new Set<number>() };
+        rowMatch.terms.add(termIndex);
+        sessionMatch.rows.set(rowKey, rowMatch);
+      }
 
-    return rows.map((row) => {
-      const summary = toSessionSummary(row);
+      candidateSessionKeys = previousCandidates === null
+        ? termSessionKeys
+        : new Set([...previousCandidates].filter((sessionKey) => termSessionKeys.has(sessionKey)));
+    }
+
+    const rankedMatches = [...matches.entries()]
+      .filter(([sessionKey, match]) =>
+        candidateSessionKeys?.has(sessionKey) === true && match.terms.size === terms.length)
+      .map(([, match]) => {
+        const bestRow = [...match.rows.values()].sort(compareSearchRows)[0];
+        if (bestRow === undefined) throw new Error("Search match has no indexed rows");
+        return { bestRow, summary: toSessionSummary(bestRow.row) };
+      })
+      .sort((left, right) => {
+        const termDifference = right.bestRow.terms.size - left.bestRow.terms.size;
+        if (termDifference !== 0) return termDifference;
+        const favoriteDifference = Number(right.summary.favorite) - Number(left.summary.favorite);
+        if (favoriteDifference !== 0) return favoriteDifference;
+        const rankDifference =
+          numberColumn(left.bestRow.row, "rank") - numberColumn(right.bestRow.row, "rank");
+        if (rankDifference !== 0) return rankDifference;
+        return right.summary.updatedAt.localeCompare(left.summary.updatedAt);
+      })
+      .slice(0, limit);
+
+    return rankedMatches.map(({ bestRow, summary }) => {
+      const row = bestRow.row;
       const content = stringColumn(row, "content");
-      const matchIndex = content.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+      const matchIndex = firstSearchTermIndex(content, terms);
       const start = Math.max(0, matchIndex < 0 ? 0 : matchIndex - 60);
       const end = Math.min(content.length, start + 220);
       const rawRole = stringColumn(row, "role");
@@ -442,7 +557,7 @@ export class SearchDatabase {
         messageIndex: numberColumn(row, "message_index"),
         role,
         snippet: `${start > 0 ? "…" : ""}${content.slice(start, end)}${end < content.length ? "…" : ""}`,
-        score: -numberColumn(row, "rank"),
+        score: bestRow.terms.size * 1_000_000 - numberColumn(row, "rank"),
       };
     });
   }

@@ -130,6 +130,78 @@ describe("SearchDatabase", () => {
     expect(database.search({ query: "CallbackService" })[0]?.messageIndex).toBe(1);
   });
 
+  test("requires every search term across the whole session", async () => {
+    const database = await createDatabase();
+    const matching = {
+      ...sampleSession(),
+      messages: [
+        {
+          index: 0,
+          role: "user" as const,
+          content: "请把最新版本推送到仓库",
+          timestamp: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          index: 1,
+          role: "assistant" as const,
+          content: "接下来部署到家中服务器",
+          timestamp: "2026-01-01T00:01:00.000Z",
+        },
+      ],
+    };
+    const partial = {
+      ...sampleSession(),
+      sessionKey: "codex:session-2",
+      sourceSessionId: "session-2",
+      filePath: "/tmp/session-2.jsonl",
+      messages: [{
+        index: 0,
+        role: "user" as const,
+        content: "只记录了推送操作",
+        timestamp: "2026-01-02T00:00:00.000Z",
+      }],
+    };
+    for (const [session, mtimeMs] of [[matching, 1], [partial, 2]] as const) {
+      database.upsertSession(session, {
+        provider: "codex",
+        path: session.filePath,
+        mtimeMs,
+        size: 100,
+      });
+    }
+
+    const results = database.search({ query: "推送 家中服务器" });
+    expect(results.map((result) => result.sessionKey)).toEqual([matching.sessionKey]);
+    expect(results[0]?.messageIndex).toBe(0);
+  });
+
+  test("supports quoted phrases and combines session IDs with content terms", async () => {
+    const database = await createDatabase();
+    const sessionId = "019fc543-bed2-7e21-bc69-35cb2091fcae";
+    const session = {
+      ...sampleSession(),
+      sessionKey: `codex:${sessionId}`,
+      sourceSessionId: sessionId,
+      filePath: `/tmp/${sessionId}.jsonl`,
+      messages: [{
+        index: 0,
+        role: "user" as const,
+        content: "GitHub Actions 已经部署到家中服务器",
+        timestamp: "2026-01-01T00:00:00.000Z",
+      }],
+    };
+    database.upsertSession(session, {
+      provider: "codex",
+      path: session.filePath,
+      mtimeMs: 1,
+      size: 100,
+    });
+
+    expect(database.search({ query: '"GitHub Actions" 家中服务器' })[0]?.sessionKey).toBe(session.sessionKey);
+    expect(database.search({ query: "35cb2091 家中服务器" })[0]?.sessionKey).toBe(session.sessionKey);
+    expect(database.search({ query: '"GitHub deployment" 家中服务器' })).toEqual([]);
+  });
+
   test("loads provider manifests and applies multiple session updates as one batch", async () => {
     const database = await createDatabase();
     const first = sampleSession();

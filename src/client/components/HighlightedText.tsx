@@ -1,8 +1,8 @@
 import { Fragment } from "react";
-import { splitTextByLiteralQuery } from "../textHighlight.ts";
+import { splitTextBySearchQuery } from "../textHighlight.ts";
 
 export const HighlightedText = ({ text, query }: { text: string; query: string }) =>
-  splitTextByLiteralQuery(text, query).map((part, index) =>
+  splitTextBySearchQuery(text, query).map((part, index) =>
     part.highlighted ? (
       <mark className="search-highlight" key={index}>{part.value}</mark>
     ) : (
