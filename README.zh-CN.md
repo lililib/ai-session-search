@@ -97,6 +97,10 @@ corepack pnpm typecheck
 corepack pnpm build
 ```
 
+## 致谢
+
+- 感谢 [LINUX DO](https://linux.do/) 提供开放的开源分享社区。
+
 搜索架构参考并改编自
 [d-kimuson/claude-code-viewer](https://github.com/d-kimuson/claude-code-viewer)。详见
 [NOTICE.md](./NOTICE.md)。项目采用 [MIT License](./LICENSE)。

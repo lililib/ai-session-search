@@ -98,6 +98,10 @@ corepack pnpm typecheck
 corepack pnpm build
 ```
 
+## Acknowledgements
+
+- Thanks to [LINUX DO](https://linux.do/) for the open-source sharing community.
+
 The search architecture is inspired by and adapted from
 [d-kimuson/claude-code-viewer](https://github.com/d-kimuson/claude-code-viewer). See
 [NOTICE.md](./NOTICE.md). Licensed under the [MIT License](./LICENSE).
