@@ -1,7 +1,7 @@
 {
   "name": "ai-session-search",
   "productName": "AI Session Search",
-  "version": "0.3.9",
+  "version": "0.4.0",
   "private": true,
   "description": "Read-only local search for AI coding agent conversations.",
   "type": "module",

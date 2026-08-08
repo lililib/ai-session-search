@@ -133,8 +133,9 @@ const windowsLaunch = (
   cwd: string | null,
   dataDir: string,
 ): TerminalLaunch => {
-  const shellArgs = windowsShellArgs(settings.shellPath, command);
   if (settings.terminal === "windows-terminal") {
+    // wt.exe treats semicolons as subcommand separators even inside a single argument.
+    const wtCommand = command.replaceAll(";", "\\;");
     return {
       file: "wt.exe",
       args: [
@@ -143,11 +144,12 @@ const windowsLaunch = (
         "new-tab",
         ...(cwd === null ? [] : ["-d", cwd]),
         settings.shellPath,
-        ...shellArgs,
+        ...windowsShellArgs(settings.shellPath, wtCommand),
       ],
       detached: true,
     };
   }
+  const shellArgs = windowsShellArgs(settings.shellPath, command);
   if (settings.terminal === "powershell" || settings.terminal === "cmd") {
     return {
       file: settings.shellPath,

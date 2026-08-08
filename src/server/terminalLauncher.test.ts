@@ -118,10 +118,10 @@ describe("buildTerminalLaunch", () => {
     expect(custom.args).toEqual(["-e", "/bin/bash", "-lic", "resume-session"]);
   });
 
-  test("opens PowerShell in a new tab of the most recent Windows Terminal window", () => {
+  test("escapes PowerShell statement separators passed through Windows Terminal", () => {
     const launch = buildTerminalLaunch(
       { terminal: "windows-terminal", customPath: null, shellPath: "powershell.exe" },
-      "Set-Location -LiteralPath 'C:\\Workspace\\Demo'; yolo session-1",
+      "Set-Location -LiteralPath 'C:\\Workspace\\Demo'; yolo session-1; Write-Host done",
       "C:\\Workspace\\Demo",
       "C:\\Users\\Alice\\AppData\\Roaming\\AI Session Search",
       "win32",
@@ -137,14 +137,14 @@ describe("buildTerminalLaunch", () => {
       "powershell.exe",
       "-NoExit",
       "-Command",
-      "Set-Location -LiteralPath 'C:\\Workspace\\Demo'; yolo session-1",
+      "Set-Location -LiteralPath 'C:\\Workspace\\Demo'\\; yolo session-1\\; Write-Host done",
     ]);
   });
 
   test("can open standalone PowerShell and Command Prompt windows", () => {
     const powershell = buildTerminalLaunch(
       { terminal: "powershell", customPath: null, shellPath: "pwsh.exe" },
-      "yolo session-1",
+      "Set-Location C:\\Workspace; yolo session-1",
       "C:\\Workspace",
       "C:\\AppData",
       "win32",
@@ -159,7 +159,7 @@ describe("buildTerminalLaunch", () => {
 
     expect(powershell).toMatchObject({
       file: "pwsh.exe",
-      args: ["-NoExit", "-Command", "yolo session-1"],
+      args: ["-NoExit", "-Command", "Set-Location C:\\Workspace; yolo session-1"],
       cwd: "C:\\Workspace",
       detached: true,
     });
